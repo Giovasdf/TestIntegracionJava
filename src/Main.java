@@ -1,96 +1,89 @@
 import javax.jms.*;
 import org.apache.activemq.ActiveMQConnectionFactory;
+import org.apache.camel.builder.RouteBuilder;
+import org.apache.camel.component.jms.JmsComponent;
+import org.apache.camel.impl.DefaultCamelContext;
+import org.apache.camel.CamelContext;
 import java.util.Scanner;
 
 public class Main {
 
     public static void main(String[] args) {
         String brokerURL = "tcp://localhost:61616";
-        String sendTopicName = "Empresa1";
-        String receiveTopicName = "Empresa2";
 
         Scanner scanner = new Scanner(System.in);
 
-        // Envío de mensajes
-        System.out.println("== Envío de mensajes ==");
-        System.out.println("Ingrese el contenido del mensaje (escriba 'fin' para salir):");
-        String messageContent = scanner.nextLine();
-
         try {
             // Crear conexión y sesión
             ConnectionFactory connectionFactory = new ActiveMQConnectionFactory(brokerURL);
             Connection connection = connectionFactory.createConnection();
+            connection.start(); // Iniciar la conexión
             Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
 
-            // Crear el productor para enviar mensajes a un topic
-            Topic sendTopic = session.createTopic(sendTopicName);
-            MessageProducer producer = session.createProducer(sendTopic);
+            CamelContext camelContext = new DefaultCamelContext();
+            camelContext.addComponent("jms", JmsComponent.jmsComponentAutoAcknowledge(connectionFactory));
 
-            while (!messageContent.equals("fin")) {
-                // Crear mensaje de texto
-                TextMessage message = session.createTextMessage(messageContent);
-
-                // Enviar mensaje al topic
-                producer.send(message);
-                System.out.println("Mensaje enviado: " + messageContent);
-
-                System.out.println("Ingrese el contenido del mensaje (escriba 'fin' para salir):");
-                messageContent = scanner.nextLine();
-            }
-
-            // Cerrar conexión y recursos
-            producer.close();
-            session.close();
-            connection.close();
-        } catch (JMSException e) {
-            e.printStackTrace();
-        }
-
-        // Recepción de mensajes
-        System.out.println("\n== Recepción de mensajes ==");
-
-        try {
-            // Crear conexión y sesión
-            ConnectionFactory connectionFactory = new ActiveMQConnectionFactory(brokerURL);
-            Connection connection = connectionFactory.createConnection();
-            Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
-
-            // Crear el suscriptor para recibir mensajes de un topic
-            Topic receiveTopic = session.createTopic(receiveTopicName);
-            MessageConsumer consumer = session.createConsumer(receiveTopic);
-
-            // Crear el listener para procesar los mensajes recibidos
-            MessageListener listener = new MessageListener() {
-                public void onMessage(Message message) {
-                    try {
-                        if (message instanceof TextMessage) {
-                            TextMessage textMessage = (TextMessage) message;
-                            String messageContent = textMessage.getText();
-                            System.out.println("Mensaje recibido: " + messageContent);
-                        }
-                    } catch (JMSException e) {
-                        e.printStackTrace();
-                    }
+            camelContext.addRoutes(new RouteBuilder() {
+                public void configure() {
+                    from("direct:test")
+                            .choice()
+                            .when(body().contains("Empresa1"))
+                            .to("jms:queue:Empresa1")
+                            .when(body().contains("Empresa2"))
+                            .to("jms:queue:Empresa2")
+                            .when(body().contains("Empresa3"))
+                            .to("jms:queue:Empresa3")
+                            .otherwise()
+                            .to("jms:queue:otros");
                 }
-            };
+            });
 
-            // Asociar el listener al consumidor
-            consumer.setMessageListener(listener);
+            camelContext.start();
 
-            // Iniciar la conexión
-            connection.start();
+            while (true) {
+                System.out.println("Seleccione una opción:");
+                System.out.println("1. Empresa1");
+                System.out.println("2. Empresa2");
+                System.out.println("3. Empresa3");
+                System.out.println("0. Salir");
 
-            System.out.println("Presione enter para detener la recepción de mensajes.");
-            scanner.nextLine();
+                int option = scanner.nextInt();
+                scanner.nextLine(); // Consumir el salto de línea
 
-            // Detener la recepción de mensajes
-            consumer.close();
-            session.close();
-            connection.close();
+                String messageContent;
+
+                switch (option) {
+                    case 1:
+                        messageContent = "Empresa1";
+                        break;
+                    case 2:
+                        messageContent = "Empresa2";
+                        break;
+                    case 3:
+                        messageContent = "Empresa3";
+                        break;
+                    case 0:
+                        System.out.println("Saliendo...");
+                        session.close();
+                        connection.close();
+                        scanner.close();
+                        camelContext.stop();
+                        return;
+                    default:
+                        System.out.println("Opción inválida");
+                        continue;
+                }
+
+                System.out.println("Ingrese el contenido del mensaje:");
+                messageContent += " "+scanner.nextLine(); // Leer el contenido del mensaje desde la entrada del usuario
+
+                camelContext.createProducerTemplate().sendBody("direct:test", messageContent);
+                System.out.println("Mensaje enviado a la cola correspondiente: " + messageContent);
+            }
         } catch (JMSException e) {
             e.printStackTrace();
+        } catch (Exception e) {
+            e.printStackTrace();
         }
-
-        scanner.close();
     }
 }
